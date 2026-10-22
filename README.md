@@ -1,6 +1,6 @@
 # Reminder decisions for order deadlines
 
-This small TypeScript service validates an order event, decides whether a deadline is within the next 24 hours, then registers a cron task and publishes one reminder. It is framed as a cutover from a cron + mailer stack: the old scheduler can stay in place until this path is observed.
+We run this small TypeScript service to validate an order event and check if the deadline lands inside the next 24 hours. If so, it registers a cron task and publishes a single reminder. Treat it as a cutover from our cron + mailer stack: keep the old scheduler running until we've observed this path healthy in prod. Missed jobs from the legacy setup are what prompted the move.
 
 ## Run the decision first
 
@@ -9,13 +9,13 @@ npm install
 npm test
 ```
 
-The focused test sends an order due at `2026-01-01T12:00:00Z` and expects `checkout:o1:a@example.com`; an order two days out expects `null`.
+Our focused test sends an order due at `2026-01-01T12:00:00Z` and expects `checkout:o1:a@example.com`; an order two days out expects `null`. Run these before trusting the scheduler.
 
 ## Connect Infrai
 
-Set `INFRAI_API_KEY` and optionally `REMINDER_WEBHOOK_URL`, then run `npm start`. The client uses `infrai.cron.create` and `infrai.queue.publish` with explicit methods, envelope checks, and exponential handling for HTTP 429. One key covers both scheduling and queue calls, so the service has one credential boundary.
+Set `INFRAI_API_KEY` and optionally `REMINDER_WEBHOOK_URL`, then run `npm start`. The client uses `infrai.cron.create` and `infrai.queue.publish` with explicit methods, envelope checks, and exponential handling for HTTP 429. One key covers both scheduling and queue calls, so we keep a single credential boundary. In a Go worker you'd still respect that boundary and not scatter secrets.
 
-`cron.create` receives only `{ cron_expr, task }`; its returned `job_id` is included in the service result. Queue messages carry the validated order fields and reminder string.
+`cron.create` receives only `{ cron_expr, task }`; its returned `job_id` is included in the service result. Queue messages carry the validated order fields and reminder string. Idempotency matters: a redelivery should not produce a second customer email.
 
 ## Cutover checklist
 
@@ -23,7 +23,7 @@ Set `INFRAI_API_KEY` and optionally `REMINDER_WEBHOOK_URL`, then run `npm start`
 - Point the webhook at the new worker and keep the incumbent schedule paused but recoverable.
 - Confirm receipt and customer-update events use the same validated boundary.
 
-To roll back, stop publishing new reminders, resume the incumbent schedule, and let already acknowledged queue messages remain recorded.
+To roll back, stop publishing new reminders, resume the incumbent schedule, and let already acknowledged queue messages remain recorded. We've been bitten by duplicate deliveries before, so leave acked messages alone.
 
 ## Privacy notes
 
